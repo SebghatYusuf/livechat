@@ -2,7 +2,6 @@ group 'tech.mastersam.livechat'
 version '1.0'
 
 buildscript {
-    namespace 'tech.mastersam.livechat'
     repositories {
         google()
         jcenter()
@@ -24,6 +23,8 @@ rootProject.allprojects {
 apply plugin: 'com.android.library'
 
 android {
+    namespace 'tech.mastersam.livechat'
+
     compileSdkVersion 34
 
     defaultConfig {
