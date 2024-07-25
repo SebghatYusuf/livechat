@@ -2,6 +2,7 @@ group 'tech.mastersam.livechat'
 version '1.0'
 
 buildscript {
+    namespace 'tech.mastersam.livechat'
     repositories {
         google()
         jcenter()
