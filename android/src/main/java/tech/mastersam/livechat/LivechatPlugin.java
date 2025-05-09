@@ -1,6 +1,7 @@
 package tech.mastersam.livechat;
 
 import android.content.Intent;
+import androidx.core.app.ActivityCompat;
 import android.os.Bundle;
 import android.widget.Toast;
 import android.app.Activity;
@@ -17,121 +18,231 @@ import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
 import io.flutter.plugin.common.MethodChannel.Result;
-import io.flutter.plugin.common.PluginRegistry.Registrar;
+import io.flutter.plugin.common.EventChannel;
+import io.flutter.plugin.common.EventChannel.StreamHandler;
 
-/// Files imported from livechat android sdk
 import com.livechatinc.inappchat.ChatWindowConfiguration;
 import com.livechatinc.inappchat.ChatWindowErrorType;
 import com.livechatinc.inappchat.ChatWindowView;
 import com.livechatinc.inappchat.models.NewMessageModel;
 
+import com.livechatinc.inappchat.ChatWindowEventsListener;
+import com.livechatinc.inappchat.ChatWindowUtils;
+
+// import io.flutter.plugin.platform.PlatformViewFactory;
+// import io.flutter.plugin.platform.PlatformView;
+// import io.flutter.plugin.common.StandardMessageCodec;
+
+import android.net.Uri;
+
 import java.util.HashMap;
 
-/// Implement chat bubble
-// import com.google.android.material.floatingactionbutton.FloatingActionButton;
-// import com.livechatinc.inappchat.ChatWindowEventsListener;
-// import com.livechatinc.inappchat.ChatWindowUtils;
+public class LivechatPlugin implements FlutterPlugin, MethodCallHandler, ActivityAware {
+    private MethodChannel methodChannel;
+    private EventChannel eventChannel;
+    private Context context;
+    private Activity activity;
+    private ChatWindowView windowView;
+    private EventChannel.EventSink events;
 
-/** LivechatPlugin */
-public class LivechatPlugin implements FlutterPlugin, MethodCallHandler, ActivityAware{
-  /// The MethodChannel that will the communication between Flutter and native Android
-  ///
-  /// This local reference serves to register the plugin with the Flutter Engine and unregister it
-  /// when the Flutter Engine is detached from the Activity
-  Activity activity;
-  private Context context;
-  ChatWindowConfiguration config = null;
-  ChatWindowView windowView = null;
-  private MethodChannel channel;
+    @Override
+    public void onAttachedToEngine(@NonNull FlutterPluginBinding flutterPluginBinding) {
+        this.context = flutterPluginBinding.getApplicationContext();
+        setupChannel(flutterPluginBinding.getBinaryMessenger());
 
-  // This static function is optional and equivalent to onAttachedToEngine. It supports the old
-  // pre-Flutter-1.12 Android projects. You are encouraged to continue supporting
-  // plugin registration via this function while apps migrate to use the new Android APIs
-  // post-flutter-1.12 via https://flutter.dev/go/android-project-migration.
-  //
-  // It is encouraged to share logic between onAttachedToEngine and registerWith to keep
-  // them functionally equivalent. Only one of onAttachedToEngine or registerWith will be called
-  // depending on the user's project. onAttachedToEngine or registerWith must both be defined
-  // in the same class.
-  public static void registerWith(Registrar registrar) {
-    final LivechatPlugin instance = new LivechatPlugin();
-    instance.onAttachedToEngine(registrar.context(), registrar.messenger());
-  }
+        // Register the embedded chat view
+        flutterPluginBinding.getPlatformViewRegistry().registerViewFactory("embedded_chat_view", new EmbeddedChatViewFactory());
+    }
 
-  @Override
-  public void onAttachedToEngine(@NonNull FlutterPluginBinding flutterPluginBinding) {
-    onAttachedToEngine(flutterPluginBinding.getApplicationContext(), flutterPluginBinding.getBinaryMessenger());
-  }
+    private void setupChannel(BinaryMessenger messenger) {
+        methodChannel = new MethodChannel(messenger, "livechatt");
+        methodChannel.setMethodCallHandler(this);
 
-  private void onAttachedToEngine(Context applicationContext, BinaryMessenger messenger) {
-    this.context = applicationContext;
-    channel = new MethodChannel(messenger, "livechatt");
-    channel.setMethodCallHandler(this);
-  }
+        eventChannel = new EventChannel(messenger, "livechatt/events");
+        eventChannel.setStreamHandler(new StreamHandler() {
+            @Override
+            public void onListen(Object arguments, EventChannel.EventSink eventSink) {
+                events = eventSink;  // Capture the event sink for pushing events later
+            }
 
-  @Override
-  public void onMethodCall(@NonNull MethodCall call, @NonNull Result result) {
-    if (call.method.equals("getPlatformVersion")) {
-      result.success("Android " + android.os.Build.VERSION.RELEASE);
-    } else if (call.method.equals("beginChat")) {
-      final String licenseNo = call.argument("licenseNo");
-      final HashMap<String,String> customParams = call.argument("customParams");
-      final String groupId = call.argument("groupId");
-      final String visitorName = call.argument("visitorName");
-      final String visitorEmail = call.argument("visitorEmail");
+            @Override
+            public void onCancel(Object arguments) {
+                events = null;  // Clear the event sink when not in use
+            }
+        });
+    }
 
-      if (licenseNo.trim().equalsIgnoreCase("")) {
-        result.error("LICENSE NUMBER EMPTY", null, null);
-      }else if (visitorName.trim().equalsIgnoreCase("")) {
-        result.error("VISITOR NAME EMPTY", null, null);
-      }else if (visitorEmail.trim().equalsIgnoreCase("")) {
-        result.error("VISITOR EMAIL EMPTY", null, null);
-      }else{
-        Intent intent = new Intent(activity, com.livechatinc.inappchat.ChatWindowActivity.class);
-        Bundle config = new ChatWindowConfiguration.Builder()
+    @Override
+    public void onMethodCall(@NonNull MethodCall call, @NonNull Result result) {
+        switch (call.method) {
+            case "getPlatformVersion":
+                result.success("Android " + android.os.Build.VERSION.RELEASE);
+                break;
+            case "beginChat":
+                handleBeginChat(call, result);
+                break;
+            case "clearSession":
+                clearChatSession(result);
+                break;
+            default:
+                result.notImplemented();
+                break;
+        }
+    }
+
+    private void handleBeginChat(@NonNull MethodCall call, @NonNull Result result) {
+        final String licenseNo = call.argument("licenseNo");
+        final HashMap<String, String> customParams = call.argument("customParams");
+        final String groupId = call.argument("groupId");
+        final String visitorName = call.argument("visitorName");
+        final String visitorEmail = call.argument("visitorEmail");
+
+        if (licenseNo == null || licenseNo.trim().isEmpty()) {
+            result.error("LICENSE_ERROR", "License number cannot be empty", null);
+            return;
+        }
+
+        try {
+            ChatWindowConfiguration config = buildChatConfig(licenseNo, groupId, visitorName, visitorEmail, customParams);
+
+            // Set up the event listener for chat events
+            windowView = ChatWindowUtils.createAndAttachChatWindowInstance(activity);
+            windowView.setConfiguration(config);
+            windowView.setEventsListener(new ChatWindowEventsListener() {
+                @Override
+                public void onWindowInitialized() {
+                    if (events != null) {
+                        HashMap<String, Object> windowData = new HashMap<>();
+                        windowData.put("EventType", "WindowInitialized");
+                        events.success(windowData);
+                    }
+                }
+
+                @Override
+                public void onNewMessage(NewMessageModel message, boolean windowVisible) {
+                    if (events != null) {
+                        HashMap<String, Object> messageData = new HashMap<>();
+                        messageData.put("EventType", "NewMessage");
+                        messageData.put("text", message.getText());
+                        messageData.put("windowVisible", windowVisible);
+                        events.success(messageData);
+                    }
+                }
+
+                @Override
+                public void onChatWindowVisibilityChanged(boolean visible) {
+                    if (events != null) {
+                        HashMap<String, Object> visibilityData = new HashMap<>();
+                        visibilityData.put("EventType", "ChatWindowVisibilityChanged");
+                        visibilityData.put("visibility", visible);
+                        events.success(visibilityData);
+                    }
+                }
+
+                @Override
+                public void onStartFilePickerActivity(Intent intent, int requestCode) {
+                    if (events != null) {
+                        HashMap<String, Object> eventData = new HashMap<>();
+                        eventData.put("EventType", "FilePickerActivity");
+                        eventData.put("requestCode", requestCode);
+                        events.success(eventData);
+                    }
+                    activity.startActivityForResult(intent, requestCode);
+                }
+
+                @Override
+                public void onRequestAudioPermissions(String[] permissions, int requestCode) {
+                    if (events != null) {
+                        HashMap<String, Object> permissionData = new HashMap<>();
+                        permissionData.put("event", "onRequestAudioPermissions");
+                        permissionData.put("permissions", permissions);
+                        permissionData.put("requestCode", requestCode);
+                        events.success(permissionData);
+                    }
+                    ActivityCompat.requestPermissions(activity, permissions, requestCode);
+                }
+
+                @Override
+                public boolean onError(ChatWindowErrorType errorType, int errorCode, String errorDescription) {
+                    if (events != null) {
+                        HashMap<String, Object> errorData = new HashMap<>();
+                        errorData.put("errorType", errorType.toString());
+                        errorData.put("errorCode", errorCode);
+                        errorData.put("errorDescription", errorDescription);
+                        events.success(errorData);
+                    }
+                    return true; 
+                }
+
+                @Override
+                public boolean handleUri(Uri uri) {
+                    if (events != null) {
+                        HashMap<String, Object> uriData = new HashMap<>();
+                        uriData.put("EventType", "HandleUri");
+                        uriData.put("uri", uri.toString());
+                        events.success(uriData);
+                    }
+                    return true;
+                }
+            });
+
+            windowView.initialize();
+            windowView.showChatWindow();
+
+            result.success(null);
+        } catch (Exception e) {
+            result.error("CHAT_WINDOW_ERROR", "Failed to start chat window", e);
+        }
+    }
+
+    private ChatWindowConfiguration buildChatConfig(String licenseNo, String groupId, String visitorName, String visitorEmail, HashMap<String, String> customParams) {
+        return new ChatWindowConfiguration.Builder()
                 .setLicenceNumber(licenseNo)
                 .setGroupId(groupId)
                 .setVisitorName(visitorName)
                 .setVisitorEmail(visitorEmail)
                 .setCustomParams(customParams)
-                .build()
-                .asBundle();
-        // intent.putExtra(com.livechatinc.inappchat.ChatWindowConfiguration.KEY_GROUP_ID, licenseNo);
-        // intent.putExtra(com.livechatinc.inappchat.ChatWindowConfiguration.KEY_LICENCE_NUMBER, groupId);
-        // intent.putExtra(com.livechatinc.inappchat.ChatWindowConfiguration.KEY_VISITOR_NAME, visitorName);
-        // intent.putExtra(com.livechatinc.inappchat.ChatWindowConfiguration.KEY_VISITOR_EMAIL, visitorEmail);
-        intent.putExtras(config);
-        activity.startActivity(intent);
-
-        result.success(null);
-      }
-    } else {
-      result.notImplemented();
+                .build();
     }
-  }
 
-  @Override
-  public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
+    private void clearChatSession(Result result) {
+        ChatWindowUtils.clearSession(activity);
+        if (windowView != null) {
+            windowView.reload(false);
+        }
+        result.success(null);
+    }
 
-  }
+    @Override
+    public void onAttachedToActivity(ActivityPluginBinding binding) {
+        this.activity = binding.getActivity();
+    }
 
-  @Override
-  public void onAttachedToActivity(ActivityPluginBinding activityPluginBinding) {
-    activity = activityPluginBinding.getActivity();
-  }
+    @Override
+    public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
+        teardownChannels();
+    }
 
-  @Override
-  public void onDetachedFromActivity() {
+    private void teardownChannels() {
+        if (methodChannel != null) {
+            methodChannel.setMethodCallHandler(null);
+            methodChannel = null;
+        }
+        if (eventChannel != null) {
+            eventChannel.setStreamHandler(null);
+        }
+    }
 
-  }
+    @Override
+    public void onDetachedFromActivity() {
+        this.activity = null;
+    }
 
-  @Override
-  public void onDetachedFromActivityForConfigChanges() {
+    @Override
+    public void onDetachedFromActivityForConfigChanges() {}
 
-  }
-
-  @Override
-  public void onReattachedToActivityForConfigChanges(ActivityPluginBinding activityPluginBinding) {
-
-  }
+    @Override
+    public void onReattachedToActivityForConfigChanges(ActivityPluginBinding binding) {
+        this.activity = binding.getActivity();
+    }
 }

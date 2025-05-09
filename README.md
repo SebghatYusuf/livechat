@@ -14,7 +14,7 @@ A livechat package for embedding mobile chat window in your mobile application.
 
 ```yaml
 dependencies:
-  livechatt: "^1.4.0"
+  livechatt: ^1.5.1
 ```
 
 ### ⚡️ Import
@@ -33,7 +33,6 @@ import 'package:livechatt/livechatt.dart';
 #### Internet and Storage Access
 ```xml
 <uses-permission android:name="android.permission.INTERNET"/>
-<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
 ```
 
 #### ChatWindow
@@ -76,8 +75,8 @@ end
 
 ```dart
 onPressed: (){
-    Livechat.beginChat(LICENSE_NO, GROUP_ID, VISITOR_NAME, VISITOR_EMAIL);
-    },
+    Livechat.beginChat(LICENSE_NO);
+},
 ```
 
 - Cases where there are custom parameters
@@ -86,14 +85,106 @@ onPressed: (){
 var cmap = <String, String>{
     'org': 'organizationTextController.text',
     'position': 'positionTextController.text'
-  };
+};
 
 onPressed: (){
-    Livechat.beginChat(LICENSE_NO, GROUP_ID, VISITOR_NAME, VISITOR_EMAIL, cmap);
-    },
+    Livechat.beginChat(
+      LICENSE_NO,
+      groupId: GROUP_ID,
+      visitorName: VISITOR_NAME,
+      visitorEmail: VISITOR_EMAIL,
+      customParams: cmap,
+    );
+},
 ```
 
 For more info, please, refer to the `main.dart` in the example.
+
+### Embedded Chat Views
+
+The package now supports embedded views for custom positioning within your app’s layout:
+
+```dart
+
+var cmap = <String, String>{
+    'org': 'organizationTextController.text',
+    'position': 'positionTextController.text'
+};
+
+Livechat.embeddedChat(
+  licenseNo: 'your_license',
+  groupId: 'group_id',
+  visitorEmail: 'visitor_email',
+  visitorName: 'visitor_name',
+  customParams: cmap,
+)
+```
+
+For more info, please refer to `EmbeddedChatWidget` in `main.dart` in the example.
+
+### Events Streaming
+
+> Android only
+
+The plugin streams various events such as new messages, visibility changes, and errors from the chat window. You can listen to events like this:
+
+```dart
+Livechat.chatEvents.listen((event) {
+  print(event);
+});
+```
+
+For specific events, you can stream:
+
+##### New Messages:
+
+```dart
+Livechat.newMessages.listen((message) {
+  print(message); 
+});
+```
+
+##### Visibility Changes:
+
+```dart
+Livechat.visibilityChanges.listen((isVisible) {
+  print("Chat Window is visible: $isVisible");
+});
+```
+
+##### Errors:
+
+```dart
+Livechat.errors.listen((error) {
+  print("Error: ${error['errorDescription']}");
+});
+```
+
+##### Uri handling:
+
+```dart
+Livechat.uriHandlers.listen((message) {
+  print(message); 
+});
+```
+
+##### File picker activity:
+
+```dart
+Livechat.filePickerActivity.listen((message) {
+  print(message); 
+});
+```
+
+##### Window initialization:
+
+```dart
+Livechat.windowInitialized.listen((message) {
+  print(message); 
+});
+```
+
+For more info, please refer to `EmbeddedChatWidget` in `main.dart` in the example.
 
 ### Views
 
